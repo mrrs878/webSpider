@@ -53,15 +53,14 @@ public:
 	}
 	~webSpider() {}
 	void getImgByBFS(void);
-	void getImgByDFS(void);
 private:
 	void connServerByHttp(void);
 	void connServerByHttps(void);
 	void analyHost(const string &_url);
-	void analyURL(void);
+	void getAllURL(void);
 	void regexGetImg(void);
 	void regexGetCom(void);
-	void saveImg(const string &_img_url);
+	void downloadSaveImg(const string &_img_url);
 };
 
 void webSpider::getImgByBFS(void) {
@@ -75,42 +74,18 @@ void webSpider::getImgByBFS(void) {
 		que_url.pop();
 		is_exit[cur_url]++;
 
-		analyHost(cur_url);
-		analyURL();
+		getAllURL();
 
+		regexGetImg();
+		regexGetCom();
+	
 		for (iter = img_URL.begin(); iter != img_URL.end(); ++iter)
-			saveImg(*iter);
+			downloadSaveImg(*iter);
 		img_URL.clear();
 
 		for (iter = com_URL.begin(); iter != com_URL.end(); ++iter) {
 			if (is_exit[*iter] == 0)
 				que_url.push(*iter);
-		}
-		com_URL.clear();
-	}
-}
-
-void webSpider::getImgByDFS(void) {
-	stack<string> stk_url;
-	string cur_url;
-	vector<string>::iterator iter;
-
-	stk_url.push(beginURL);
-	while (!stk_url.empty()) {
-		cur_url = stk_url.top();
-		stk_url.pop();
-
-		analyHost(cur_url);
-		connServerByHttps();
-		analyURL();
-
-		for (iter = img_URL.begin(); iter != img_URL.end(); ++iter)
-			saveImg(*iter);
-		img_URL.clear();
-
-		for (iter = com_URL.begin(); iter != img_URL.end(); ++iter) {
-			if (is_exit[*iter] == 0)
-				stk_url.push(*iter);
 		}
 		com_URL.clear();
 	}
@@ -136,7 +111,8 @@ void webSpider::analyHost(const string &_url) {
 	cout << "host: " << host << "  repath: " << repath << endl;
 }
 
-void webSpider::analyURL(void) {
+void webSpider::getAllURL(void) {
+	analyHost(cur_url);
 	if(protocol)
 		connServerByHttps();
 	else
@@ -167,17 +143,15 @@ void webSpider::analyURL(void) {
 		}
 		close(conn_fd);
 	}
-	regexGetImg();
-	regexGetCom();
 }
 
-void webSpider::saveImg(const string &_img_url) {
-	static int x = 0;
-	int n = 0;
+void webSpider::downloadSaveImg(const string &_img_url) {
+	int res = 0;
 	int i = 0;
 	string format;
 	string img_name;
-
+	char recv_buf[1024];
+	
 	for(i = _img_url.length() - 4; i<_img_url.length(); ++i)
 		format.push_back(_img_url[i]);
 	for(i = _img_url.length() - 5; ; --i)
@@ -186,34 +160,32 @@ void webSpider::saveImg(const string &_img_url) {
 	++i;
 	for(; i<_img_url.length() - 4; ++i)
 		img_name.push_back(_img_url[i]);
-	img_name = img_name + format;
-		
-	string sys_cmd = "wget ";
-	sys_cmd += _img_url;
-	system(sys_cmd.c_str());
-	sys_cmd = "mv ";
-	sys_cmd += img_name;
-	sys_cmd += (" ./img/" + img_name);
-	system(sys_cmd.c_str());
+	img_name = "./img/" + img_name + format;
 	
-#if 0	
 	fstream file;
 	file.open(img_name, ios::out | ios::binary);
 	char buf[1024];
 	bzero(buf, sizeof(buf));
+	
 	analyHost(_img_url);
 	
 	if(protocol) {
+		string tmp;
+		char x;
+		
 		connServerByHttps();
-		int res = 0;
-		char recv_buf[1024];
 		bzero(recv_buf, sizeof(recv_buf));
-
-		while((res = SSL_read(ssl, recv_buf, sizeof(recv_buf - 1))) > 0) {
-			file.write(recv_buf, res);
-			bzero(recv_buf, sizeof(recv_buf));
+		while(SSL_read(ssl, &x, 1) > 0) {  //response info ignore
+			tmp.push_back(x);
+			if(tmp.find("\r\n\r\n") != -1)
+				break;
 		}
-
+		if(tmp.find("200 OK")) {  //成功连接
+			while((res = SSL_read(ssl, recv_buf, sizeof(recv_buf - 1))) > 0) {  //file 
+				file.write(recv_buf, res);
+				bzero(recv_buf, sizeof(recv_buf));
+			}
+		}
 		file.close();
 		SSL_shutdown(ssl);
 		SSL_free(ssl);
@@ -222,18 +194,17 @@ void webSpider::saveImg(const string &_img_url) {
 	}
 	else {
 		connServerByHttp();
-		n = recv(conn_fd, buf, sizeof(buf) - 1, 0);
-		char *pos = strstr(buf, "\r\n\r\n");
-		file.write(pos + strlen("\r\n\r\n"), n - (pos - buf) - strlen("\r\n\r\n"));
-		while ((n = recv(conn_fd, buf, sizeof(buf) - 1, 0)) > 0) {
-			file.write(buf, n);
-			bzero(buf, sizeof(buf));
+		res = recv(conn_fd, recv_buf, sizeof(recv_buf) - 1, 0);
+		char *pos = strstr(recv_buf, "\r\n\r\n");
+		file.write(pos + strlen("\r\n\r\n"), res - (pos - recv_buf) - strlen("\r\n\r\n"));
+		while ((res = recv(conn_fd, recv_buf, sizeof(recv_buf) - 1, 0)) > 0) {
+			file.write(recv_buf, res);
+			bzero(recv_buf, sizeof(recv_buf));
 		}
 		file.close();
 		close(conn_fd);
 		
 	}
-#endif
 }
 
 void webSpider::regexGetImg(void) {
@@ -251,15 +222,10 @@ void webSpider::regexGetImg(void) {
 
 void webSpider::regexGetCom(void) {
 	smatch mat;
-	regex expr;
+	regex expr("href=\"(http://[^\\s'\"]+)\"");
 	string::const_iterator start = all_html.begin();
 	string::const_iterator end = all_html.end();
 
-	if(protocol)
-		expr = "href=\"(https://[^\\s'\"]+)\"";
-	else
-		expr = "href=\"(http://[^\\s'\"]+)\"";
-	
 	while (regex_search(start, end, mat, expr)) {
 		string msg(mat[1].first, mat[1].second);
 		com_URL.push_back(msg);
@@ -336,7 +302,7 @@ void webSpider::connServerByHttps(void) {
 using namespace std;
 
 int main(void) {
-	string beginURL = "https://www.ke.qq.com/";
+	string beginURL = "https://www.zhipin.com/";
 	//string beginURL = "http://www.php.cn/";
 	
 	if (mkdir("./img", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) == -1)
@@ -344,8 +310,6 @@ int main(void) {
 	webSpider myspider(beginURL);
 
 	myspider.getImgByBFS();
-	//myspider.getImgByDFS();
-
 
 	return 0;
 }
