@@ -8,6 +8,9 @@ webspider-updatex：后续更新版本
 
 compile:
   0：webspider/webspider-bkp
+  
   /usr/local/bin/g++ -std=c++11 -g -o webspider webspider-bkp.cpp -lssl -lcrypto
+  
   1：webspider-wget
+  
   /usr/local/bin/g++ -std=c++11 -g -o webspider webspider-wget.cpp
